@@ -41,7 +41,7 @@ VLLM_ARGS = (
 POD_ENV = {
     "HF_TOKEN": HF_TOKEN,
     "VLLM_API_KEY": VLLM_API_KEY,
-    "HF_HUB_ENABLE_HF_TRANSFER": "1",
+    "HF_XET_HIGH_PERFORMANCE": "1",
 }
 
 
@@ -111,42 +111,39 @@ def create_with_backoff(gpu_id, datacenter_id, cloud, attempts=5):
 
 
 def deploy(region=None, rounds=5):
+    last_detail = None
+
     for round_no in range(1, rounds + 1):
-        print(f"\n=== Placement attempt {round_no}/{rounds} ===")
-
         candidate_list = candidates(region)
-        print(f"Found {len(candidate_list)} candidates")
-
+        if not candidate_list:
+            print(f"[{round_no}/{rounds}] catalog reports no usable GPUs")
+        
         for gpu_id, datacenter_id, cloud in candidate_list:
-            print(f"Trying {gpu_id} / {datacenter_id} / {cloud}...")
-
+            where = datacenter_id if cloud == "SECURE" else "any"
             response = create_with_backoff(gpu_id, datacenter_id, cloud)
-
-            print(f"  -> HTTP {response.status_code}: {response.text[:300]}")
 
             if response.status_code == 201:
                 return response.json()
 
+            last_detail = response.json().get("detail", response.text[:120])
+
             if response.status_code in (400, 403):
-                # 400: no capacity here right now. 403: no access to this pool.
+                print(f"[{round_no}/{rounds}] {gpu_id} / {cloud} / {where}: no capacity")
                 continue
-
             if response.status_code == 402:
-                raise SystemExit(f"Cannot deploy: {response.text}")
-
+                raise SystemExit(f"insufficient balance: {last_detail}")
             if response.status_code == 422:
-                raise SystemExit(f"Bad request: {response.text}")
-
+                raise SystemExit(f"bad request: {last_detail}")
             response.raise_for_status()
 
-        print("Nothing placed. Refreshing catalog...")
-        time.sleep(5)
+        if round_no < rounds:
+            time.sleep(5)
 
-    raise SystemExit(f"Could not place a Pod after {rounds} attempts.")
+    raise SystemExit(f"no pod placed after {rounds} rounds. last error: {last_detail}")
 
 
 if __name__ == "__main__":
     pod = deploy()
-    print(f"\n{pod['id']} placed in {pod['dataCenterId']} on {pod['gpu']['id']} ({pod['cloud']})")
+    print(f"\npod      : {pod['id']}  ({pod['gpu']['id']}, {pod['cloud']}, {pod['dataCenterId']})")
     print(f"base url : https://{pod['id']}-8000.proxy.runpod.net")
     print(f"api key  : {VLLM_API_KEY}")
