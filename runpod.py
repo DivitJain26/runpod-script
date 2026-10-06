@@ -32,6 +32,7 @@ CLOUD_PREFERENCE = ["COMMUNITY", "SECURE"]
 USABLE = {"LOW", "MEDIUM", "HIGH"}  # anything but NONE
 
 VLLM_IMAGE = "vllm/vllm-openai:latest"
+VLLM_PORT = 8000
 VLLM_ARGS = (
     "Qwen/Qwen3-14B "
     "--max-model-len 4000 "
@@ -104,7 +105,7 @@ def create(gpu_id, datacenter_id, cloud):
         "cloud": cloud,
         "gpu": {"id": gpu_id, "count": 1},
         "disk": 100,
-        "ports": ["8000/http"],
+        "ports": [f"{VLLM_PORT}/http"],
         "env": POD_ENV,
         "args": VLLM_ARGS,
     }
@@ -180,7 +181,7 @@ def wait_running(pod_id, timeout_s=RUNNING_TIMEOUT_S):
 
 def wait_model_loaded(pod_id, timeout_s=MODEL_TIMEOUT_S):
     """Block until vLLM answers /v1/models; raise PodFailed on timeout or bad key."""
-    base_url = f"https://{pod_id}-8000.proxy.runpod.net"
+    base_url = f"https://{pod_id}-{VLLM_PORT}.proxy.runpod.net"
     headers = {"Authorization": f"Bearer {VLLM_API_KEY}"}
     deadline = time.time() + timeout_s
     while time.time() < deadline:
