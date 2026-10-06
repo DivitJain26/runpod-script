@@ -1,5 +1,4 @@
 import os
-import secrets
 import time
 
 import requests
@@ -8,35 +7,40 @@ from dotenv import load_dotenv
 load_dotenv()
 
 RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY")
+VLLM_API_KEY = os.getenv("VLLM_API_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN", "")
 
 if not RUNPOD_API_KEY:
     raise RuntimeError("RUNPOD_API_KEY is not set")
 
+if not VLLM_API_KEY:
+    raise RuntimeError("VLLM_API_KEY is not set")
+
 API = "https://api.runpod.io"
 SESSION = requests.Session()
 SESSION.headers["Authorization"] = f"Bearer {RUNPOD_API_KEY}"
 
-# Fresh per run. Anyone with the proxy URL but not this key gets a 401.
-VLLM_API_KEY = secrets.token_urlsafe(32)
 
 # Order of attempts: every cloud for the first GPU, then every cloud for the
 # next GPU, and so on. GPU wins over cloud.
 GPU_PREFERENCE = [
-    "NVIDIA A100-SXM4-80GB",
-    "NVIDIA A100 80GB PCIe",
+    # "NVIDIA A100-SXM4-80GB",
+    # "NVIDIA A100 80GB PCIe",
     # "NVIDIA A40",
+    "NVIDIA RTX 2000 Ada Generation"
 ]
 CLOUD_PREFERENCE = ["COMMUNITY", "SECURE"]
 USABLE = {"LOW", "MEDIUM", "HIGH"}  # anything but NONE
 
 VLLM_IMAGE = "vllm/vllm-openai:latest"
 VLLM_ARGS = (
-    "--model openai/gpt-oss-120b "
-    "--max-model-len 30000 "
+    "Qwen/Qwen3-4B "
+    "--max-model-len 4000 "
+    # "--model openai/gpt-oss-120b "
+    # "--max-model-len 30000 "
     "--gpu-memory-utilization 0.95 "
-    "--kv-offloading-size 50 "
-    "--kv-offloading-backend native "
+    # "--kv-offloading-size 50 "
+    # "--kv-offloading-backend native "
 )
 POD_ENV = {
     "HF_TOKEN": HF_TOKEN,
@@ -142,8 +146,40 @@ def deploy(region=None, rounds=5):
     raise SystemExit(f"no pod placed after {rounds} rounds. last error: {last_detail}")
 
 
+def wait_running(pod_id, timeout_s=900):
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        pod = SESSION.get(f"{API}/v2/pods/{pod_id}", timeout=30).json()
+        if pod["status"] == "RUNNING":
+            return pod
+        if pod["status"] in ("EXITED", "ERROR", "TERMINATED"):
+            raise SystemExit(f"pod died: {pod['status']}")
+        time.sleep(10)
+    raise SystemExit("pod never reached RUNNING")
+
+
+def wait_model_loaded(pod_id, timeout_s=1200):
+    url = f"https://{pod_id}-8000.proxy.runpod.net/v1/models"
+    headers = {"Authorization": f"Bearer {VLLM_API_KEY}"}
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        try:
+            r = requests.get(url, headers=headers, timeout=10)
+            if r.status_code == 200:
+                return url.rsplit("/v1", 1)[0]
+            if r.status_code == 401:
+                raise SystemExit("vLLM rejected the api key")
+        except requests.RequestException:
+            pass
+        time.sleep(15)
+    raise SystemExit("model never loaded")
+
+
 if __name__ == "__main__":
     pod = deploy()
-    print(f"\npod      : {pod['id']}  ({pod['gpu']['id']}, {pod['cloud']}, {pod['dataCenterId']})")
-    print(f"base url : https://{pod['id']}-8000.proxy.runpod.net")
+    print(f"pod {pod['id']} placed, waiting...")
+    wait_running(pod["id"])
+    base_url = wait_model_loaded(pod["id"])
+    print(f"\nready")
+    print(f"base url : {base_url}")
     print(f"api key  : {VLLM_API_KEY}")
