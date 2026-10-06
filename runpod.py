@@ -81,7 +81,7 @@ def create(gpu_id, datacenter_id, cloud):
         "image": VLLM_IMAGE,
         "cloud": cloud,
         "gpu": {"id": gpu_id, "count": 1},
-        "disk": 120,
+        "disk": 100,
         "ports": ["8000/http"],
         "env": POD_ENV,
         "args": VLLM_ARGS,
