@@ -1,4 +1,5 @@
-from common import API, POD_NAME, SESSION, pod_base_url
+import requests
+from common import API, POD_NAME, SESSION, VLLM_API_KEY, pod_base_url
 
 
 def get_by_id(pod_id):
@@ -39,6 +40,31 @@ def get_active(name=POD_NAME):
         print(f"[get_active] warning: {len(running)} running pods named {name}, using newest")
     return running[0] if running else None
 
+def is_model_loaded(pod_id, timeout=10):
+    """Return True if vLLM on this pod answers /v1/models with the right key; False otherwise."""
+    try:
+        r = requests.get(
+            f"{pod_base_url(pod_id)}/v1/models",
+            headers={"Authorization": f"Bearer {VLLM_API_KEY}"},
+            timeout=timeout,
+        )
+    except requests.RequestException:
+        return False  # pod not reachable yet, or proxy not routing
+    if r.status_code == 401:
+        raise RuntimeError("vLLM rejected the api key")
+    return r.status_code == 200
+
+
+def loaded_models(pod_id, timeout=10):
+    """Return the model names vLLM is serving, or [] if it is not up."""
+    if not is_model_loaded(pod_id, timeout):
+        return []
+    r = requests.get(
+        f"{pod_base_url(pod_id)}/v1/models",
+        headers={"Authorization": f"Bearer {VLLM_API_KEY}"},
+        timeout=timeout,
+    )
+    return [m["id"] for m in r.json().get("data", [])]
 
 if __name__ == "__main__":
     for p in get_all():
