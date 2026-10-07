@@ -1,8 +1,8 @@
 import time
 
-import requests
-
 from common import API, HF_TOKEN, POD_NAME, SESSION, VLLM_API_KEY, VLLM_PORT, pod_base_url
+from get_pod import get_by_id, is_model_loaded
+from terminate_pod import terminate
 
 
 # Order of attempts: every cloud for the first GPU, then every cloud for the
@@ -10,17 +10,17 @@ from common import API, HF_TOKEN, POD_NAME, SESSION, VLLM_API_KEY, VLLM_PORT, po
 GPU_PREFERENCE = [
     # "NVIDIA A100-SXM4-80GB",
     # "NVIDIA A100 80GB PCIe",
-    "NVIDIA A40",
-    # "NVIDIA RTX A5000"
+    # "NVIDIA A40",
+    "NVIDIA RTX A5000"
+    # "NVIDIA RTX 2000 Ada Generation"
 ]
 CLOUD_PREFERENCE = ["COMMUNITY", "SECURE"]
 USABLE = {"LOW", "MEDIUM", "HIGH"}  # anything but NONE
 
 VLLM_IMAGE = "vllm/vllm-openai:latest"
-VLLM_PORT = 8000
 VLLM_ARGS = (
-    "Qwen/Qwen3-8B "
-    "--max-model-len 30000 "
+    "Qwen/Qwen3-4B "
+    "--max-model-len 4000 "
     # "--model openai/gpt-oss-120b "
     # "--max-model-len 30000 "
     "--gpu-memory-utilization 0.95 "
@@ -39,8 +39,10 @@ MAX_POD_ATTEMPTS = 3                # fresh pods to try if one boots but never l
 RUNNING_TIMEOUT_S = 900
 MODEL_TIMEOUT_S = 1200
 
+
 class PodFailed(Exception):
     """A placed pod did not become usable; caller should terminate and retry."""
+
 
 def candidates(region=None):
     """Return (gpu_id, datacenter_id, cloud) triples the catalog says are deployable, best first."""
@@ -72,15 +74,6 @@ def candidates(region=None):
     )
     return [(gpu_id, dc_id, cloud) for gpu_id, dc_id, cloud, _ in found]
 
-    found.sort(
-        key=lambda c: (
-            GPU_PREFERENCE.index(c[0]),
-            CLOUD_PREFERENCE.index(c[2]),
-            rank[c[3]],
-        )
-    )
-    return [(gpu_id, dc_id, cloud) for gpu_id, dc_id, cloud, _ in found]
-
 
 def create(gpu_id, datacenter_id, cloud):
     """Issue one POST /v2/pods for a single (gpu, dc, cloud) candidate."""
@@ -89,7 +82,7 @@ def create(gpu_id, datacenter_id, cloud):
         "image": VLLM_IMAGE,
         "cloud": cloud,
         "gpu": {"id": gpu_id, "count": 1},
-        "disk": 100,
+        "disk": 50,
         "ports": [f"{VLLM_PORT}/http"],
         "env": POD_ENV,
         "args": VLLM_ARGS,
@@ -143,18 +136,13 @@ def allocate_pod(region=None):
     raise SystemExit(f"no pod placed within {ALLOCATE_DEADLINE_S}s. last error: {last_detail}")
 
 
-def terminate(pod_id):
-    """Permanently delete a pod; 404 means it is already gone."""
-    r = SESSION.post(f"{API}/v2/pods/{pod_id}/action", json={"action": "terminate"}, timeout=30)
-    if r.status_code not in (204, 404):
-        print(f"[terminate] {pod_id} failed: HTTP {r.status_code} {r.text[:120]}")
-
-
 def wait_running(pod_id, timeout_s=RUNNING_TIMEOUT_S):
     """Block until Runpod reports RUNNING; raise PodFailed if it dies or times out."""
     deadline = time.time() + timeout_s
     while time.time() < deadline:
-        pod = SESSION.get(f"{API}/v2/pods/{pod_id}", timeout=30).json()
+        pod = get_by_id(pod_id)
+        if pod is None:
+            raise PodFailed(f"pod {pod_id} disappeared")
         status = pod.get("status")
         if status == "RUNNING":
             return pod
@@ -166,18 +154,13 @@ def wait_running(pod_id, timeout_s=RUNNING_TIMEOUT_S):
 
 def wait_model_loaded(pod_id, timeout_s=MODEL_TIMEOUT_S):
     """Block until vLLM answers /v1/models; raise PodFailed on timeout or bad key."""
-    base_url = f"https://{pod_id}-{VLLM_PORT}.proxy.runpod.net"
-    headers = {"Authorization": f"Bearer {VLLM_API_KEY}"}
     deadline = time.time() + timeout_s
     while time.time() < deadline:
         try:
-            r = requests.get(f"{base_url}/v1/models", headers=headers, timeout=10)
-            if r.status_code == 200:
-                return base_url
-            if r.status_code == 401:
-                raise PodFailed("vLLM rejected the api key")
-        except requests.RequestException:
-            pass
+            if is_model_loaded(pod_id):
+                return pod_base_url(pod_id)
+        except RuntimeError as exc:
+            raise PodFailed(str(exc)) from exc
         time.sleep(15)
     raise PodFailed(f"model not loaded on {pod_id} in {timeout_s}s")
 
