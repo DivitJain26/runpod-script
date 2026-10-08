@@ -45,12 +45,14 @@ def get_by_id(pod_id):
     """
     try:
         r = requests.get("{}/v2/pods/{}".format(API, pod_id), headers=HEADERS, timeout=30)
-        if r.status_code == 200:
-            pod = json.loads(r.text)
-            logger.info('RunPod pod details pod_id=%s status=%s gpu=%s cloud=%s', pod['id'], pod['status'], pod.get('gpu', {}).get('id'), pod['cloud'])
-            return pod
+        if r.status_code != 200:
+            logger.error('get_by_id failed pod_id=%s http_status=%s response=%s', pod_id, r.status_code, r.text)
+            return None
+        pod = json.loads(r.text)
+        logger.info('RunPod pod details pod_id=%s status=%s gpu=%s cloud=%s', pod['id'], pod['status'], pod.get('gpu', {}).get('id'), pod['cloud'])
+        return pod
     except requests.RequestException as ex:
-        logger.exception('get_by_id failed pod_id=%s error=%s', pod_id, ex)
+        logger.exception('RunPod API request failed error=%s', ex)
         return None
  
  
