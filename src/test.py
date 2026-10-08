@@ -1,4 +1,4 @@
-from main import get_by_id, get_active, health_check, terminate_by_id
+from main import get_by_id, get_active, health_check, terminate_by_id, candidates
 
 
 if __name__ == '__main__':
@@ -13,4 +13,6 @@ if __name__ == '__main__':
     # health_check(id)
     # print(health_check(id))
     
-    terminate_by_id(id)
+    # terminate_by_id(id)
+    
+    candidates()

@@ -158,14 +158,15 @@ def terminate_by_id(pod_id):
 
 ## Create
 
-GPU_PREFERENCE = (
-    'NVIDIA A100-SXM4-80GB',
-    'NVIDIA A100 80GB PCIe',
-    'NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition',
-    'NVIDIA RTX PRO 6000 Blackwell Server Edition',
-    'NVIDIA RTX PRO 6000 Blackwell Workstation Edition',
-    'NVIDIA H100 PCIe'
-)
+POD_PREFERENCE = [
+    ('NVIDIA A100 80GB PCIe', 'COMMUNITY'),  # $1.19
+    ('NVIDIA A100-SXM4-80GB', 'COMMUNITY'),  # $1.39
+    ('NVIDIA A100 80GB PCIe', 'SECURE'),  # $1.59
+    ('NVIDIA A100-SXM4-80GB', 'SECURE'),  # $1.59
+    ('NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition', 'COMMUNITY'),  # $1.64
+    ('NVIDIA RTX PRO 6000 Blackwell Server Edition', 'COMMUNITY'),  # $1.69
+    ('NVIDIA RTX PRO 6000 Blackwell Workstation Edition', 'COMMUNITY'),  # $1.69
+]
 CLOUD_PREFERENCE = ('COMMUNITY', 'SECURE')
 USABLE_AVAILABILITY = ('LOW', 'MEDIUM', 'HIGH')
 AVAILABILITY_RANK = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
@@ -199,9 +200,8 @@ def candidates():
     """
     Read the RunPod catalog and return deployable (gpu_id, datacenter_id, cloud) triples, best first.
 
-    Returns [] if the catalog call fails or nothing matches GPU_PREFERENCE / USABLE_AVAILABILITY.
+    Returns [] if the catalog call fails or nothing matches POD_PREFERENCE / USABLE_AVAILABILITY.
     """
-
     url = '{}/v2/catalog/datacenters'.format(RUNPOD_API)
     params = {'include': 'GPU_AVAILABILITY'}
 
@@ -223,21 +223,23 @@ def candidates():
         available_gpus = dc.get('gpuAvailability', [])
         for gpu in available_gpus:
 
-            if gpu['id'] not in GPU_PREFERENCE or gpu['availability'] not in USABLE_AVAILABILITY:
+            if gpu['availability'] not in USABLE_AVAILABILITY:
                 continue
 
-            for cloud in CLOUD_PREFERENCE:
-                key = (gpu['id'], dc['id'] if cloud == 'SECURE' else None, cloud)  # community is not dc-scoped
+            for gpu_id, cloud in POD_PREFERENCE:
+                if gpu_id != gpu['id']:
+                    continue
+                key = (gpu_id, dc['id'] if cloud == 'SECURE' else None, cloud)  # community is not dc-scoped
                 if key not in seen:
                     seen.add(key)
-                    found.append((gpu['id'], dc['id'], cloud, gpu['availability']))
+                    found.append((gpu_id, dc['id'], cloud, gpu['availability']))
 
-    found.sort(key=lambda c: (GPU_PREFERENCE.index(c[0]), CLOUD_PREFERENCE.index(c[2]), AVAILABILITY_RANK[c[3]]))
-    
+    found.sort(key=lambda c: (POD_PREFERENCE.index((c[0], c[2])), AVAILABILITY_RANK[c[3]]))
+
     logger.info('Catalog: %s candidates', len(found))
     for gpu_id, dc_id, cloud, availability in found:
         logger.info('Candidate gpu=%s datacenter=%s cloud=%s availability=%s', gpu_id, dc_id, cloud, availability)
-        
+
     return [(gpu_id, dc_id, cloud) for gpu_id, dc_id, cloud, _ in found]
 
 
