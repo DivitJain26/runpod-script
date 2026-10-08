@@ -19,8 +19,10 @@ if not RUNPOD_API_KEY:
 if not VLLM_API_KEY:
     raise RuntimeError("VLLM_API_KEY is not set")
 
-API = "https://api.runpod.io"
+PODS_URL = "https://api.runpod.io/v2/pods"
+
 HEADERS = {"Authorization": "Bearer {}".format(RUNPOD_API_KEY)}
+VLLM_HEADERS = {"Authorization": "Bearer {}".format(VLLM_API_KEY)}
 
 POD_NAME = "metroleads-inference"
 VLLM_PORT = 8000
@@ -43,8 +45,11 @@ def get_by_id(pod_id):
     Sends a GET request to the RunPod API and returns the pod details as a dictionary.
     Returns None if the pod does not exist or if the API request fails.
     """
+    
+    url = '{}/{}'.format(PODS_URL, pod_id)
+    
     try:
-        r = requests.get("{}/v2/pods/{}".format(API, pod_id), headers=HEADERS, timeout=30)
+        r = requests.get(url, headers=HEADERS, timeout=30)
         
         if r.status_code != 200:
             logger.error('get_by_id failed pod_id=%s http_status=%s response=%s', pod_id, r.status_code, r.text)
@@ -66,7 +71,7 @@ def get_active():
     Returns a list of RUNNING pods, or None if the API request fails.
     """
     try:
-        r = requests.get("{}/v2/pods".format(API), headers=HEADERS, timeout=30)
+        r = requests.get(PODS_URL, headers=HEADERS, timeout=30)
 
         if r.status_code != 200:
             logger.error('get_active failed http_status=%s response=%s', r.status_code, r.text)
@@ -87,36 +92,36 @@ def health_check(pod_id):
     """
     Health check a RunPod pod.
 
-    Returns True if the model is loaded and serving, False otherwise.
+    Returns 200 if the model is loaded and serving, otherwise an error status.
     """
     pod = get_by_id(pod_id)
     if not pod:
         logger.warning("Health check failed: pod not found pod_id=%s", pod_id)
-        return False
+        return 404
 
     if pod.get("status") != "RUNNING":
         logger.warning("Health check skipped pod_id=%s status=%s", pod_id, pod.get("status"))
-        return False
+        return 409
 
     url = '{}/v1/models'.format(pod_base_url(pod_id))
 
     try:
-        r = requests.get(url, headers={'Authorization': 'Bearer {}'.format(VLLM_API_KEY)}, timeout=10)
+        r = requests.get(url, headers=VLLM_HEADERS, timeout=10)
         
         if r.status_code != 200:
             logger.error('Health check failed pod_id=%s http_status=%s', pod_id, r.status_code)
-            return False
+            return 503
 
         data = json.loads(r.text)
         models = [model.get('id') for model in data.get('data', []) if model.get('id')]
         
         if not models:
             logger.warning('vLLM reachable but no models loaded pod_id=%s', pod_id)
-            return False
+            return 503
 
         logger.info('Health check ok pod_id=%s models=%s', pod_id, models)
-        return True
+        return 200
 
     except requests.RequestException as ex:
         logger.warning('Health check unreachable pod_id=%s error=%s', pod_id, ex)
-        return False
+        return 503
