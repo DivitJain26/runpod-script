@@ -155,5 +155,59 @@ def terminate_by_id(pod_id):
         logger.exception('RunPod API request failed for pod_id=%s error=%s', pod_id, ex)
         return 503
     
+
+## Create
+
+GPU_PREFERENCE = (
+    'NVIDIA A100-SXM4-80GB',
+    'NVIDIA A100 80GB PCIe',
+    'NVIDIA RTX PRO 6000 Blackwell Server Edition'
+)
+CLOUD_PREFERENCE = ('COMMUNITY', 'SECURE')
+USABLE_AVAILABILITY = ('LOW', 'MEDIUM', 'HIGH')
+AVAILABILITY_RANK = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+
+def candidates(region=None):
+    """
+    Read the RunPod catalog and return deployable (gpu_id, datacenter_id, cloud) triples, best first.
+
+    Returns [] if the catalog call fails or nothing matches GPU_PREFERENCE / USABLE_AVAILABILITY.
+    """
+
+    url = '{}/v2/catalog/datacenters'.format(RUNPOD_API)
+    params = {'regions': region, 'include': 'GPU_AVAILABILITY'}
+
+    try:
+        r = requests.get(url, headers=HEADERS, params=params, timeout=30)
+    except requests.RequestException as ex:
+        logger.exception('Catalog request failed error=%s', ex)
+        return []
+
+    if r.status_code != 200:
+        logger.error('Catalog failed http_status=%s response=%s', r.status_code, r.text)
+        return []
+
+    found, seen = [], set()
+
+    datacenters = json.loads(r.text).get('dataCenters', [])
+    for dc in datacenters:
+
+        available_gpus = dc.get('gpuAvailability', [])
+        for gpu in available_gpus:
+
+            if gpu['id'] not in GPU_PREFERENCE or gpu['availability'] not in USABLE_AVAILABILITY:
+                continue
+
+            for cloud in CLOUD_PREFERENCE:
+                key = (gpu['id'], dc['id'] if cloud == 'SECURE' else None, cloud)  # community is not dc-scoped
+                if key not in seen:
+                    seen.add(key)
+                    found.append((gpu['id'], dc['id'], cloud, gpu['availability']))
+
+    found.sort(key=lambda c: (GPU_PREFERENCE.index(c[0]), CLOUD_PREFERENCE.index(c[2]), AVAILABILITY_RANK[c[3]]))
     
-   
+    logger.info('Catalog: %s candidates', len(found))
+    for gpu_id, dc_id, cloud, availability in found:
+        logger.info('Candidate gpu=%s datacenter=%s cloud=%s availability=%s', gpu_id, dc_id, cloud, availability)
+        
+    return [(gpu_id, dc_id, cloud) for gpu_id, dc_id, cloud, _ in found]
