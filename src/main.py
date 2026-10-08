@@ -161,13 +161,41 @@ def terminate_by_id(pod_id):
 GPU_PREFERENCE = (
     'NVIDIA A100-SXM4-80GB',
     'NVIDIA A100 80GB PCIe',
-    'NVIDIA RTX PRO 6000 Blackwell Server Edition'
+    'NVIDIA RTX PRO 6000 Blackwell Max-Q Workstation Edition',
+    'NVIDIA RTX PRO 6000 Blackwell Server Edition',
+    'NVIDIA RTX PRO 6000 Blackwell Workstation Edition',
+    'NVIDIA H100 PCIe'
 )
 CLOUD_PREFERENCE = ('COMMUNITY', 'SECURE')
 USABLE_AVAILABILITY = ('LOW', 'MEDIUM', 'HIGH')
 AVAILABILITY_RANK = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
 
-def candidates(region=None):
+from common import API, HF_TOKEN, POD_NAME, VLLM_API_KEY, VLLM_PORT, pod_base_url
+VLLM_IMAGE = "vllm/vllm-openai:latest"
+VLLM_ARGS = (
+    "Qwen/Qwen3-4B "
+    "--max-model-len 4000 "
+    # "--model openai/gpt-oss-120b "
+    # "--max-model-len 30000 "
+    "--gpu-memory-utilization 0.95 "
+    # "--kv-offloading-size 50 "
+    # "--kv-offloading-backend native "
+)
+POD_ENV = {
+    "HF_TOKEN": HF_TOKEN,
+    "VLLM_API_KEY": VLLM_API_KEY,
+    "HF_XET_HIGH_PERFORMANCE": "1",
+}
+
+ALLOCATE_DEADLINE_S = 2 * 60 * 60
+ALLOCATE_RETRY_S = 30
+MAX_POD_ATTEMPTS = 3
+RUNNING_TIMEOUT_S = 900
+MODEL_TIMEOUT_S = 1200
+RUNNING_POLL_S = 10
+MODEL_POLL_S = 15
+
+def candidates():
     """
     Read the RunPod catalog and return deployable (gpu_id, datacenter_id, cloud) triples, best first.
 
@@ -175,7 +203,7 @@ def candidates(region=None):
     """
 
     url = '{}/v2/catalog/datacenters'.format(RUNPOD_API)
-    params = {'regions': region, 'include': 'GPU_AVAILABILITY'}
+    params = {'include': 'GPU_AVAILABILITY'}
 
     try:
         r = requests.get(url, headers=HEADERS, params=params, timeout=30)
@@ -211,3 +239,36 @@ def candidates(region=None):
         logger.info('Candidate gpu=%s datacenter=%s cloud=%s availability=%s', gpu_id, dc_id, cloud, availability)
         
     return [(gpu_id, dc_id, cloud) for gpu_id, dc_id, cloud, _ in found]
+
+
+def create(gpu_id, datacenter_id, cloud):
+    """
+    Create one RunPod pod for a single (gpu, datacenter, cloud) candidate.
+    """
+    body = {
+        'name': POD_NAME,
+        'image': VLLM_IMAGE,
+        'cloud': cloud,
+        'gpu': {'id': gpu_id, 'count': 1},
+        'disk': 100,
+        'ports': ['8000/http'],
+        'env': POD_ENV,
+        'args': VLLM_ARGS,
+    }
+    if cloud == 'SECURE':
+        body['dataCenterIds'] = [datacenter_id]
+        
+    try:
+        r = requests.post(PODS_URL, headers=HEADERS, json=body, timeout=60)
+
+        if r.status_code not in (200, 201):
+            logger.error('Create pod failed gpu=%s datacenter=%s cloud=%s ' 'http_status=%s response=%s', gpu_id, datacenter_id, cloud, r.status_code, r.text)
+            return None
+
+        pod = r.json()
+        logger.info('RunPod pod created pod_id=%s gpu=%s datacenter=%s cloud=%s', pod.get('id'), gpu_id, datacenter_id, cloud)
+        return pod
+
+    except requests.RequestException as ex:
+        logger.exception('RunPod create request failed gpu=%s datacenter=%s cloud=%s error=%s', gpu_id, datacenter_id, cloud, ex)
+        return None
