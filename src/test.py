@@ -1,8 +1,13 @@
-from main import get_by_id, get_active
+from main import get_by_id, get_active, health_check
 
 
 if __name__ == '__main__':
-    print(get_active())
-    # print(get_by_id('xj7uzx0r5em49b'))
-    get_active()
-    get_by_id('on25nxnzu8bzca')
+    id = 'v7ec7u0tzat5al'
+    
+    # print(get_active())
+    # get_active()
+
+    # print(get_by_id(id))
+    # get_by_id(id)
+    
+    health_check(id)
