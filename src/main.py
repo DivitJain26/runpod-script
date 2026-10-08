@@ -19,7 +19,8 @@ if not RUNPOD_API_KEY:
 if not VLLM_API_KEY:
     raise RuntimeError("VLLM_API_KEY is not set")
 
-PODS_URL = "https://api.runpod.io/v2/pods"
+RUNPOD_API = 'https://api.runpod.io'
+PODS_URL = '{}/v2/pods'.format(RUNPOD_API)
 
 HEADERS = {"Authorization": "Bearer {}".format(RUNPOD_API_KEY)}
 VLLM_HEADERS = {"Authorization": "Bearer {}".format(VLLM_API_KEY)}
@@ -90,6 +91,7 @@ def get_active():
         logger.exception('RunPod API request failed for active pods error=%s', ex)
         return None
     
+    
 ## healthcheck
 def health_check(pod_id):
     """
@@ -128,3 +130,30 @@ def health_check(pod_id):
     except requests.RequestException as ex:
         logger.warning('Health check unreachable pod_id=%s error=%s', pod_id, ex)
         return 503
+    
+## terminate
+def terminate_by_id(pod_id):
+    """
+    Permanently delete a RunPod pod.
+
+    Returns 204 if the pod is terminated, otherwise the error status from the API.
+    """
+    
+    url = '{}/{}'.format(PODS_URL, pod_id)
+
+    try:
+        r = requests.delete(url, headers=HEADERS, timeout=30)
+
+        if r.status_code not in (200, 204):
+            logger.error('terminate_by_id failed pod_id=%s http_status=%s response=%s', pod_id, r.status_code, r.text)
+            return r.status_code
+
+        logger.info('RunPod pod terminated pod_id=%s http_status=%s', pod_id, r.status_code)
+        return r.status_code
+
+    except requests.RequestException as ex:
+        logger.exception('RunPod API request failed for pod_id=%s error=%s', pod_id, ex)
+        return 503
+    
+    
+   
