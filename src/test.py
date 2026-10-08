@@ -1,8 +1,8 @@
-from main import get_by_id
+from main import get_by_id, get_active
 
 
 if __name__ == '__main__':
-    # print(get_active())
+    print(get_active())
     # print(get_by_id('xj7uzx0r5em49b'))
-    # get_active()
-    get_by_id('xj7uzx0r5em49b')
+    get_active()
+    get_by_id('on25nxnzu8bzca')

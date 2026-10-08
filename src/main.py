@@ -52,30 +52,29 @@ def get_by_id(pod_id):
         logger.info('RunPod pod details pod_id=%s status=%s gpu=%s cloud=%s', pod['id'], pod['status'], pod.get('gpu', {}).get('id'), pod['cloud'])
         return pod
     except requests.RequestException as ex:
-        logger.exception('RunPod API request failed error=%s', ex)
+        logger.exception('RunPod API request failed for pod_id=%s error=%s', pod_id, ex)
         return None
  
  
-# def get_active():
-#     """
-#     GET /v2/pods, following the cursor. Returns every RUNNING pod on the account, newest first.
-#     """
-#     active = []
-#     cursor = None
-#     page = 0
-#     while True:
-#         page += 1
-#         r = SESSION.get('{}/v2/pods'.format(API), params={'limit': 100, 'cursor': cursor}, timeout=30)
-#         r.raise_for_status()
-#         data = r.json()
-#         logger.debug('Pods page %d: %d pods', page, len(data['pods']))
-#         active += [p for p in data['pods'] if p['status'] == 'RUNNING']
-#         if not data['pagination']['hasNextPage']:
-#             break
-#         cursor = data['pagination']['nextCursor']
- 
-#     if active:
-#         logger.info('%d RUNNING pods, $%.2f/h total', len(active), sum(p['cost'] for p in active))
-#     else:
-#         logger.warning('No RUNNING pods')
-#     return active
+def get_active():
+    """
+    Fetch all RUNNING pods on RunPod.
+
+    Returns a list of RUNNING pods, or None if the API request fails.
+    """
+    try:
+        r = requests.get("{}/v2/pods".format(API), headers=HEADERS, timeout=30)
+
+        if r.status_code != 200:
+            logger.error('get_active failed http_status=%s response=%s', r.status_code, r.text)
+            return None
+
+        data = json.loads(r.text)
+        active = [pod for pod in data.get('pods', []) if pod.get('status') == 'RUNNING']
+
+        logger.info('RunPod active pods count=%s', len(active))
+        return active
+
+    except requests.RequestException as ex:
+        logger.exception('RunPod API request failed for active pods error=%s', ex)
+        return None
