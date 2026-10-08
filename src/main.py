@@ -80,6 +80,9 @@ def get_active():
         data = json.loads(r.text)
         active = [pod for pod in data.get('pods', []) if pod.get('status') == 'RUNNING']
 
+        for pod in active:
+            logger.info('RunPod pod details pod_id=%s status=%s gpu=%s cloud=%s', pod['id'], pod['status'], pod.get('gpu', {}).get('id'), pod['cloud'])
+
         logger.info('RunPod active pods count=%s', len(active))
         return active
 
@@ -110,7 +113,7 @@ def health_check(pod_id):
         
         if r.status_code != 200:
             logger.error('Health check failed pod_id=%s http_status=%s', pod_id, r.status_code)
-            return 503
+            return r.status_code
 
         data = json.loads(r.text)
         models = [model.get('id') for model in data.get('data', []) if model.get('id')]
